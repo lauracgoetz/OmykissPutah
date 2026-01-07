@@ -1,0 +1,396 @@
+---
+title: "5_adaptive"
+output: html_notebook
+---
+
+Make adaptive plots
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(HardyWeinberg)
+```
+
+
+```{r}
+omy_adapt <- read_csv("../data/putah_adaptive.csv")
+
+meta_bind <- read_csv("../data/SH_metadata.csv")
+```
+
+create genotypes file
+
+```{r}
+omy_adapt2 <- omy_adapt %>% 
+  mutate(greb1_middlecore1 = case_when(
+    greb1_middlecore1 == "P" ~ paste("E"),
+    greb1_middlecore1 == "M" ~ paste("L"),
+    greb1_middlecore1 == "#N/A" ~ "not genotyped",
+    greb1_middlecore1 != "P" | greb1_middlecore1 != "M" | greb1_middlecore1 != "#N/A" ~ paste(greb1_middlecore1)
+  ))  %>% 
+  mutate(omy05_perfect1 = case_when(
+    omy05_perfect1 == "#N/A" ~ "not genotyped",
+    omy05_perfect1 != "#N/A" ~ paste(omy05_perfect1)
+  )) %>% 
+  mutate(gene_sex = case_when(
+    OmyY1_reads > 5 ~ paste("Male"),
+    OmyY1_reads <= 5 ~ paste("Female")
+  ), .after=OmyY1_reads) %>% 
+  dplyr::select(MISEQ_ID, LENGTH, gene_sex, greb1_middlecore1, omy05_perfect1)
+
+omy_adapt3 <- left_join(omy_adapt2, meta_bind %>% dplyr::select(NMFS_DNA_ID, MISEQ_ID, LOCATION, SLG, BARRIERS), by="MISEQ_ID") %>% 
+  filter(!is.na(SLG)) %>% 
+  left_join(., omy20 %>% dplyr::select(NMFS_DNA_ID, tag_id_1521_a1, tag_id_1521_a2)) %>% 
+  mutate(BARRIERS = case_when(
+    BARRIERS == "Hatchery" ~ "Below",
+    TRUE ~ paste(BARRIERS)
+  )) %>% 
+  mutate(LOCATION = case_when(
+    LOCATION == "CVA" | LOCATION == "CVB" ~ "CCV",
+    TRUE ~ paste(LOCATION)
+  )) %>% 
+  mutate(BARRIERS = case_when(
+    SLG == "HIDR"~ "Below",
+    SLG != "HIDR" ~ paste(BARRIERS)
+  )) 
+
+
+```
+
+
+# Omy05
+
+```{r}
+omy5a <- omy_adapt3 %>% 
+  filter(omy05_perfect1 != "not genotyped") %>% 
+  filter(LOCATION == "Putah") %>% 
+  mutate(Below_Monticello = case_when(
+    str_detect(SLG, "IDR|ANR") ~ "Below Monticello",
+    !(str_detect(SLG, "IDR|ANR")) ~ "Above Monticello"
+  )) %>% 
+  group_by(SLG, Below_Monticello, omy05_perfect1) %>% 
+  count() %>% 
+  group_by(SLG) %>% 
+  mutate(freq = n/sum(n))
+  
+omyagg <- ggplot(omy5a)+
+  geom_col(aes(x=SLG, y= freq, fill = omy05_perfect1), position = position_fill(reverse = TRUE))+
+  facet_grid(Below_Monticello~.)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 5))+
+  scale_fill_manual(values = c("dodgerblue", "darkolivegreen3", "firebrick2"))+
+  theme_classic()
+
+omyagg
+```
+
+
+```{r}
+# Basic piechart
+omy5pie <- ggplot(omy5a, aes(x="", y=freq, fill=omy05_perfect1)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  facet_grid(SLG~.)+
+  scale_fill_manual(values = c("dodgerblue", "darkolivegreen3", "firebrick2"), name = "Omy05 genotype", labels = c("AA", "AR", "RR"))+
+  theme_void() # remove background, grid, numeric labels
+
+
+ggsave(plot=omy5pie, file="../figures/omy5pie.png", width = 15, height = 10, units = "cm", dpi = 800)
+
+omy5pie
+
+```
+
+
+##KW
+
+```{r}
+putomy5.chi <- omy_adapt3 %>% 
+  filter(omy05_perfect1 != "not genotyped") %>% 
+  filter(LOCATION == "Putah") %>% 
+  mutate(Below_Monticello = case_when(
+    str_detect(SLG, "IDR|ANR") ~ "Below Monticello",
+    !(str_detect(SLG, "IDR|ANR")) ~ "Above Monticello"
+  )) %>% 
+  group_by(Below_Monticello, omy05_perfect1) %>% 
+  count() %>% 
+  group_by(Below_Monticello) %>%
+  mutate(freq = n/sum(n)) %>% 
+  ungroup() %>% 
+  add_row(Below_Monticello = "Below Monticello", omy05_perfect1 = "R",
+          n = 0, freq = 0)
+
+kruskal.test(putomy5.chi, omy05_perfect1~Below_Monticello)
+```
+
+
+## Summary
+
+```{r}
+omy5c <- omy_adapt3 %>% 
+  filter(omy05_perfect1 != "not genotyped") %>% 
+  group_by(SLG, BARRIERS, omy05_perfect1) %>% 
+  count() %>% 
+  pivot_wider(names_from = omy05_perfect1, values_from = n)
+write_csv(omy5c, "../tables/Omy05ct.csv")
+
+```
+
+
+
+## HWE
+
+This step creates large list with populations grouped for running pop gen analyses using strataG
+```{r}
+hweomy5 <- omy_adapt3 %>% 
+  filter(omy05_perfect1 != "not genotyped") %>% 
+  group_by(SLG) %>% 
+  count(omy05_perfect1)
+
+hweomy5.2 <- hweomy5 %>% 
+  pivot_wider(names_from = omy05_perfect1, values_from = n, values_fill = 0) %>% 
+  select(SLG, A, H, R) %>% 
+  pivot_longer(!SLG, names_to = "omy05_perfect1", values_to = "n") %>% 
+  mutate(freq = n/sum(n), total = sum(n))
+
+
+gen_di_split <- hweomy5.2 %>% 
+  group_by(SLG) 
+group_name_df <- group_keys(gen_di_split) %>% 
+  mutate(group_name=SLG)
+group_name <- group_name_df$group_name %>% sort()
+
+genos_omy5 <- gen_di_split %>% 
+  group_by(SLG) %>% 
+  group_split(.keep = FALSE) %>% 
+  setNames(group_name)
+
+hwe.omy5 <- lapply(genos_omy5, function(x){
+  
+  hwe.eac <- x$n
+  
+  
+  HW.tests <- HWChisq(hwe.eac)
+  
+  hwechis <- data.frame(chisq = HW.tests$chisq, pval = HW.tests$pval, D = HW.tests$D, p = HW.tests$p, f = HW.tests$f)
+  
+})
+
+hwe.omy5.1 <- as.data.frame(hwe.omy5) %>% 
+  gather() %>% 
+  rename("slg_statid"="key", "HWE_statvalue"="value") %>% 
+  separate(slg_statid, into = c("SLG", "HWE_statid"), remove = TRUE) %>% 
+  mutate(HWE_statvalue = replace_na(HWE_statvalue, 0)) %>% 
+  pivot_wider(names_from = HWE_statid, values_from = HWE_statvalue) %>% 
+  dplyr::mutate_if(is.numeric, round, 3) %>% 
+  mutate(final_col = paste("Chisq =", chisq, ", p-value =", pval, ", D =", D, ", f =", f, sep="")) 
+
+write_csv(hwe.omy5.1, "../tables/hwe.pops.omy5.csv")
+
+```
+
+
+# GREB1L
+
+```{r}
+greba <- omy_adapt3 %>% 
+  filter(greb1_middlecore1 != "not genotyped") %>% 
+  filter(LOCATION == "Putah") %>% 
+  mutate(Below_Monticello = case_when(
+    str_detect(SLG, "IDR|ANR") ~ "Below Monticello",
+    !(str_detect(SLG, "IDR|ANR")) ~ "Above Monticello"
+  )) %>% 
+  group_by(SLG, Below_Monticello, greb1_middlecore1) %>% 
+  count() %>% 
+  group_by(SLG) %>% 
+  mutate(freq = n/sum(n))
+  
+grebagg <- ggplot(greba)+
+  geom_col(aes(x=SLG, y= freq, fill = greb1_middlecore1), position = position_fill(reverse = TRUE))+
+  facet_grid(Below_Monticello~.)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 5)) +
+  scale_fill_manual(values = c("goldenrod1", "darkorange", "deepskyblue2"))+
+  theme_classic()
+
+grebagg
+```
+
+```{r}
+greba <- omy_adapt3 %>% 
+  filter(greb1_middlecore1 != "not genotyped") %>% 
+  filter(LOCATION == "Putah") %>% 
+  mutate(Below_Monticello = case_when(
+    str_detect(SLG, "IDR|ANR") ~ "Below Monticello",
+    !(str_detect(SLG, "IDR|ANR")) ~ "Above Monticello"
+  )) %>% 
+  group_by(SLG, Below_Monticello, greb1_middlecore1) %>% 
+  count() %>% 
+  group_by(SLG) %>% 
+  mutate(freq = n/sum(n))
+# Basic piechart
+grebapie <- ggplot(greba, aes(x="", y=freq, fill=greb1_middlecore1)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  facet_grid(SLG~.)+
+  scale_fill_manual(values = c("goldenrod1", "darkorange", "deepskyblue2"), name = "GREB1L genotype", labels = c("EE", "EL", "LL"))+
+  theme_void() # remove background, grid, numeric labels
+
+
+ggsave(plot=grebapie, file="../figures/grebpie.png", width = 15, height = 10, units = "cm", dpi = 800)
+
+grebapie
+```
+
+
+## KW
+
+```{r}
+putgreb.chi <- omy_adapt3 %>% 
+  filter(greb1_middlecore1 != "not genotyped") %>% 
+  filter(LOCATION == "Putah") %>% 
+  mutate(Below_Monticello = case_when(
+    str_detect(SLG, "IDR|ANR") ~ "Below Monticello",
+    !(str_detect(SLG, "IDR|ANR")) ~ "Above Monticello"
+  )) %>% 
+  group_by(Below_Monticello, greb1_middlecore1) %>% 
+  count() %>% 
+  group_by(Below_Monticello) %>% 
+  mutate(freq = n/sum(n))
+
+
+greb.abv <- putgreb.chi %>% 
+  filter(Below_Monticello == "Above Monticello")
+greb.abv <- greb.abv$n
+HWgreb.abv <- HWChisq(greb.abv)
+
+greb.blw <- putgreb.chi %>% 
+  filter(Below_Monticello == "Below Monticello")
+greb.blw <- greb.blw$n
+HWgreb.blw <- HWChisq(greb.blw)
+kruskal.test(putgreb.chi, greb1l_middlecore1~Below_Monticello)
+```
+
+## HWE
+
+
+```{r}
+hwegreb <- omy_adapt3 %>% 
+  filter(greb1_middlecore1 != "not genotyped") %>% 
+  group_by(SLG) %>% 
+  count(greb1_middlecore1)
+
+hwegreb.2 <- hwegreb %>% 
+  pivot_wider(names_from = greb1_middlecore1, values_from = n, values_fill = 0) %>% 
+  select(SLG, E, H, L) %>% 
+  pivot_longer(!SLG, names_to = "greb1_middlecore1", values_to = "n") %>% 
+  mutate(freq = n/sum(n), total = sum(n))
+
+
+gen_di_split <- hwegreb.2 %>% 
+  group_by(SLG) 
+group_name_df <- group_keys(gen_di_split) %>% 
+  mutate(group_name=SLG)
+group_name <- group_name_df$group_name %>% sort()
+
+genos_greb <- gen_di_split %>% 
+  group_by(SLG) %>% 
+  group_split(.keep = FALSE) %>% 
+  setNames(group_name)
+
+hwe.greb <- lapply(genos_greb, function(x){
+  
+  hwe.eac <- x$n
+  
+  
+  HW.tests <- HWChisq(hwe.eac)
+  
+  hwechis <- data.frame(chisq = HW.tests$chisq, pval = HW.tests$pval, D = HW.tests$D, p = HW.tests$p, f = HW.tests$f)
+  
+})
+
+hwe.greb.1 <- as.data.frame(hwe.greb) %>% 
+  gather() %>% 
+  rename("slg_statid"="key", "HWE_statvalue"="value") %>% 
+  separate(slg_statid, into = c("SLG", "HWE_statid"), remove = TRUE) %>% 
+  mutate(HWE_statvalue = replace_na(HWE_statvalue, 0)) %>% 
+  pivot_wider(names_from = HWE_statid, values_from = HWE_statvalue) %>% 
+  dplyr::mutate_if(is.numeric, round, 3) %>% 
+  mutate(final_col = paste("Chisq =", chisq, ", p-value =", pval, ", D =", D, ", f =", f, sep="")) 
+
+write_csv(hwe.greb.1, "../tables/hwe.pops.greb.csv")
+
+```
+
+# structure k=3 pie pops
+
+```{r}
+k3qval <- read_csv("../data/new_k3sheets.csv")
+```
+
+
+```{r}
+k3use <- k3qval %>% 
+  dplyr::select(k3data) %>% 
+  mutate(k3data = str_replace_all(k3data, " ", "")) %>% 
+  mutate(k3data = str_replace(k3data, "^\\d+", "")) %>% 
+  mutate(slg_name = paste(str_sub(k3data, 1, 7))) %>% 
+  mutate(k3 = paste(str_extract(k3data, "(?<=:).*"))) %>% 
+  mutate(Q1 = paste(str_sub(k3, 1, 5)),
+         Q2 = paste(str_sub(k3, 6, 10)),
+         Q3 = paste(str_sub(k3, 11, 15))) %>% 
+  dplyr::select(slg_name, Q1, Q2, Q3) %>% 
+  mutate(SLG = paste(str_sub(slg_name, 1, 4)), .after=slg_name,
+         new_SLG = paste(str_sub(slg_name, 2, 4)))
+
+
+
+k3useff1 <- k3use %>% 
+  group_by(SLG, new_SLG) %>% 
+  mutate(avgQ1 = sum(as.numeric(Q1))/n(),
+         avgQ2 = sum(as.numeric(Q2))/n(),
+         avgQ3 = sum(as.numeric(Q3))/n())  %>% 
+  pivot_longer(
+    cols = starts_with("avgQ"),
+    names_to = "Pop_eval",
+    values_to = "rank"
+  ) %>% 
+  dplyr::select(SLG, new_SLG, Pop_eval, rank) %>% 
+  distinct() 
+
+```
+
+SELECT populations we want for pie charts
+
+```{r}
+k3usef.putah <- k3useff1 %>% 
+  filter(str_detect(SLG, "^H"))
+
+k3usef.inl <- k3useff1 %>% 
+  filter(str_detect(SLG, "^I"))
+
+k3usef.coa <- k3useff1 %>% 
+  filter(str_detect(SLG, "^C"))
+
+k3usef.rtr <- k3useff1 %>% 
+  filter(str_detect(SLG, "^R"))
+
+k3usef.ccv <- k3useff1 %>% 
+  filter(str_detect(SLG, "^A|^B"))
+
+# Basic piechart
+putk3piea <- ggplot(k3usef.putah, aes(x="", y=rank, fill=Pop_eval)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  facet_grid(new_SLG~.)+
+  scale_fill_manual(values = c("royalblue", "chocolate", "olivedrab"), name = "k=3", labels = c("Coastal", "Central Valley", "Inland"))+
+  theme_void() # remove background, grid, numeric labels
+
+
+ggsave(plot=putk3piea, file="../figures/putk3piea.png", width = 15, height = 10, units = "cm", dpi = 800)
+
+putk3piea
+
+```
+
+
+
