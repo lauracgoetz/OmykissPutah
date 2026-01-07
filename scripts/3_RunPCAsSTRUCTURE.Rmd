@@ -1,0 +1,471 @@
+---
+title: "3_STRUCTURE and PCAs"
+output: html_notebook
+---
+
+```{r}
+library(microhaplotopia)
+library(tidyverse)
+library(ggplot2)
+library(adegenet)
+library(dplyr)
+```
+
+
+
+# Prep for PCA and STRUCTURE
+
+
+
+FIRST NEED TO SUBSET MOKELUMNE! 
+
+```{r}
+set.seed(13)
+
+mok <- haps_filt4 %>% 
+  filter(group == "MokelumneRH") %>% 
+  distinct(indiv.ID) %>% 
+  sample_n(50) %>% 
+  left_join(., haps_filt4)
+
+
+# bind subsetted mokelumne to filtered final file - create other PCA and STRUCTURE files from pcastr
+
+micrhps_pcastr <- rbind(haps_filt4 %>% filter(group != "MokelumneRH"), mok) %>% 
+  left_join(., meta_bind %>% dplyr::select(MISEQ_ID, SLG), by=c("indiv.ID"="MISEQ_ID"))
+
+```
+
+
+```{r}
+newnames <- read_csv("../data/structure_popnames.csv")
+
+strB00 <- left_join(strB0, newnames) %>% 
+  select(-SLG) %>% 
+  rename(SLG=STRSLG)
+```
+
+
+```{r}
+
+# create and bind on slg ids (for STRUCTURE)
+slg_ids <- micrhps_pcastr %>% 
+  dplyr::select(SLG, indiv.ID) %>% 
+  distinct() %>% 
+  group_by(SLG) %>% 
+  mutate(slg_name = sprintf("%s%03d", SLG, 1:n()), .after = indiv.ID)
+
+
+# final filtered file - slg_ids included
+
+pcastr <- left_join(micrhps_pcastr, slg_ids)
+
+# save pcastr as PCA and STRUCTURE metadata file
+write_csv(pcastr, "../data/PCAstructure_meta_full.csv")
+
+```
+
+```{r}
+# genid object with pop = SLG
+
+tmp <- pcastr %>% 
+  select(indiv.ID, slg_name, SLG, everything()) %>% 
+  select(all_of("SLG"), slg_name, locus, rank, haplo) %>%
+            group_by(slg_name, locus) %>%
+            mutate(gt = paste(haplo, collapse = ",")) %>%
+            dplyr::select(-haplo, -rank) %>%
+            distinct(slg_name, locus, .keep_all = TRUE) %>%
+            spread(locus, gt)  %>% ungroup()
+
+pops_list <- select(tmp, all_of("SLG"))
+
+tmp1 <- tmp %>% dplyr::select(-slg_name, -all_of("SLG"))
+
+tmp2 <- as.matrix(tmp1)
+
+rownames(tmp2) <- tmp$slg_name
+
+outp <- adegenet::df2genind(tmp2, sep = ",", pop = t(pops_list))
+
+outp
+
+
+
+# genid object with pop = LOCATION
+
+tmp <- haps_filt4 %>%
+  left_join(., slg_ids, by="indiv.ID") %>% 
+  left_join(., meta_bind %>% select(MISEQ_ID, LOCATION), by=c("indiv.ID"="MISEQ_ID")) %>% 
+  select(indiv.ID, slg_name, LOCATION, everything()) %>% 
+  select(all_of("LOCATION"), slg_name, locus, rank, haplo) %>%
+            group_by(slg_name, locus) %>%
+            mutate(gt = paste(haplo, collapse = ",")) %>%
+            dplyr::select(-haplo, -rank) %>%
+            distinct(slg_name, locus, .keep_all = TRUE) %>%
+            spread(locus, gt)  %>% ungroup()
+
+pops_list <- select(tmp, all_of("LOCATION"))
+
+tmp1 <- tmp %>% dplyr::select(-slg_name, -all_of("LOCATION"))
+
+tmp2 <- as.matrix(tmp1)
+
+rownames(tmp2) <- tmp$slg_name
+
+outp2 <- adegenet::df2genind(tmp2, sep = ",", pop = t(pops_list))
+
+
+
+```
+
+
+- set indiv.ID. to slg_name
+- convert to 2columnformat_numeric
+- replace NAs, change loci names
+
+
+## All populations/locations 
+
+k = 2, 3, 4, 6, 8, 10, 12, 14, 16
+
+```{r}
+
+str0 <- pcastr %>% 
+  mutate(indiv.ID = slg_name)
+  
+
+
+str1 <- mhap_transform(
+  long_genos = str0,
+  program = "2columnformat_numeric"
+)
+
+# stupid bug in column names
+bad <- c("_a3", "_a4", "_a5", "_a6", "_a7", "_a8" )
+str1a <- str1[[1]] %>% dplyr::select(-contains(bad))
+
+
+
+
+# replace NAs
+str1b <- str1a %>% 
+  replace(is.na(.), 0)
+
+str1c <- str1b %>%
+  pivot_longer(!indiv, names_to = "locus", values_to = "allele_int") %>% 
+  mutate(locus = case_when(
+    str_detect(locus, "_a1$") ~ str_replace(locus, "_a1$", ""),
+    str_detect(locus, "_a2$") ~ str_replace(locus, "_a2$", "_1")))
+
+
+
+# change all loci columns to same name (ie no _1 at the end), and remove slg_name from column 1
+
+str1d <- str1c %>%
+  spread(locus, allele_int)
+
+  
+names(str1d)[seq(3,ncol(str1d), by=2)] <- names(str1d)[seq(2,ncol(str1d), by=2)]
+
+names(str1d)[1] <- ""
+
+# write to table, run STRUCTURE using slg pipe
+write.table(str1d, "../slg_pipe/arena/slg1_Aug24_all.txt", col.names = TRUE, row.names = FALSE, sep = "\t", quote = FALSE)  
+```
+
+
+In terminal, navigate to structure/arena directory
+
+then run:
+../script/pops_list_from_sgl_pipe.sh slg1_Aug24_all.txt > pops1a.txt 
+../script/locus_list_from_sgl_pipe.sh slg1_Aug24_all.txt > locus1a.txt
+../script/Do_standard_analyses.sh slg1_Aug24_all.txt pops1a.txt locus1a.txt ALL_POP_FIXED2 DefaultSettingsStandard.sh
+
+../script/SummarizeAll.sh ALL_POP_FIXED2
+
+then navigate to new directory (ALL_POP_FIXED2>StructureArea>arena) and run:
+nohup ../script/ExecuteStructureRuns.sh  6  > BIG_LOG.txt  2>&1 &
+
+
+Once this is done running, navigate up a level to clump_and_distruct then run:
+
+./script/ClumpAndDistructAll.sh 6
+./script/LaTeXify.sh ./final_pdf/ "2 3 4 6 8 10 12 14 16" > all_pops_fixed2.tex
+pdflatex all_pops_fixed2.tex
+open all_pops_fixed2.pdf
+
+
+If you get an error running the first line of code about not finding le2unix, you can try opening the following scripts (in slg_pipe scripts folder) and adding ../bin/ before le2unix (originally has only le2unix, change to ../bin/le2unix):
+* pops_list_from_sgl_pipe.sh
+* locus_list_from_sgl_pipe.sh
+
+
+### PCA
+```{r}
+# remake same dataframe from STRUCTURE section but dont change names yet
+## actually pull out info from indiv slg_name into new columns (region, water_name)
+
+str1d.pca <- str1c %>%
+  spread(locus, allele_int) %>% 
+  mutate(SLG = paste(str_sub(indiv, 1, 4)), .after=indiv, 
+         LOCATION = paste(str_extract(indiv, "^.{1}")))
+
+library(broom)
+
+pca_1 <- str1d.pca %>%
+  select(where(is.numeric)) %>% # retain only numeric columns
+  scale() %>% # scale data
+  prcomp() # do PCA
+
+pca_avg <- pca_1 %>% 
+  augment(str1d.pca) %>% 
+  group_by(SLG) %>% 
+  mutate(gg1 = mean(.fittedPC1), gg2 = mean(.fittedPC2)) %>% 
+  ggplot(aes(gg1, gg2)) + 
+  geom_label(size = 2, aes(label = SLG, color = LOCATION)) +
+  theme_classic()+
+  #theme(legend.position = "none")+
+   scale_color_manual(values = c(
+    "dodgerblue", "dodgerblue4", "powderblue",
+    "brown3", "lightsalmon1", "darkorange",
+    "goldenrod1", "mediumorchid2", "slateblue3", 
+    "gray0"
+  ))+
+  ggtitle("PCA, mean pop Qvals: all pops")
+pca_avg
+
+pca_1gg <- pca_1 %>%
+  augment(str1d.pca) %>% 
+  ggplot(aes(.fittedPC1, .fittedPC2)) + 
+  geom_point(size = 1.5, aes(color = LOCATION)) +
+  theme_classic()+
+   scale_color_manual(values = c(
+    "dodgerblue", "dodgerblue4", "powderblue",
+    "brown3", "gray0", "darkorange",
+    "goldenrod1", "mediumorchid2", "slateblue3", 
+    "lightsalmon1"
+  ))+
+  ggtitle("PCA: all pops")
+pca_1gg
+```
+
+
+## Subset of populations - 
+
+Select populations (SLG = CDRC, BFER, RTCO, RTHO, RTKA, RTPI, RTSH, plus Putah)
+
+k = 2, 3, 4, 6, 10
+
+```{r}
+# create and bind on slg ids (for STRUCTURE)
+newnames <- read_csv("../data/structure_popnames.csv")
+
+slg_idsn <- micrhps_pcastr %>% 
+  filter(str_detect(SLG, "CDRC|BFER|RTCO|RTHO|RTKA|RTPI|RTSH") | str_detect(SLG, "^H")) %>% 
+  left_join(., newnames) %>% 
+  select(-SLG) %>% 
+  rename(SLG=STRSLG) %>% 
+  dplyr::select(SLG, indiv.ID) %>% 
+  distinct() %>% 
+  group_by(SLG) %>% 
+  mutate(slg_name = sprintf("%s%03d", SLG, 1:n()), .after = indiv.ID)
+
+
+# final filtered file - slg_ids included
+
+pcastrn <- left_join(micrhps_pcastr %>% 
+  filter(str_detect(indiv.ID, "CDRC|BFER|RTCO|RTHO|RTKA|RTPI|RTSH") | str_detect(indiv.ID, "^H")), slg_idsn) %>% 
+  distinct()
+
+strB0 <- pcastr %>% 
+  mutate(indiv.ID = slg_name) 
+
+strB1 <- mhap_transform(
+  long_genos = strB0,
+  program = "2columnformat_numeric"
+)
+
+# stupid bug in column names
+bad <- c("_a3", "_a4", "_a5", "_a6", "_a7", "_a8" )
+strB1a <- strB1[[1]] %>% dplyr::select(-contains(bad))
+
+strB1b <- strB1a %>% 
+  replace(is.na(.), 0)
+
+strB1c <- strB1b %>%
+  pivot_longer(!indiv, names_to = "locus", values_to = "allele_int") %>% 
+  mutate(locus = case_when(
+    str_detect(locus, "_a1$") ~ str_replace(locus, "_a1$", ""),
+    str_detect(locus, "_a2$") ~ str_replace(locus, "_a2$", "_1")))
+
+# change all loci columns to same name (ie no _1 at the end), and remove slg_name from column 1
+
+strB1d <- strB1c %>%
+  spread(locus, allele_int)
+
+names(strB1d)[seq(3,ncol(strB1d), by=2)] <- names(strB1d)[seq(2,ncol(strB1d), by=2)]
+
+names(strB1d)[1] <- ""
+
+# write to table, run STRUCTURE using slg pipe
+write.table(strB1d, "../slg_pipe/arena/slg2_Aug24_sub.txt", col.names = TRUE, row.names = FALSE, sep = "\t", quote = FALSE)  
+
+```
+
+In terminal, navigate to structure/arena directory
+
+then run:
+../script/pops_list_from_sgl_pipe.sh slg2_Aug24_sub.txt > pops3a.txt 
+../script/locus_list_from_sgl_pipe.sh slg2_Aug24_sub.txt > locus3a.txt
+../script/Do_standard_analyses.sh slg2_Aug24_sub.txt pops3a.txt locus3a.txt SUB_POP_FIXED3 DefaultSettingsStandard.sh
+
+then navigate to new directory (SUB_POP_FIXED3>StructureArea>arena) and run:
+nohup ../script/ExecuteStructureRuns.sh  3  > BIG_LOG.txt  2>&1 &
+
+
+Once this is done running, navigate up a level to clump_and_distruct then run:
+
+./script/ClumpAndDistructAll.sh 6
+./script/LaTeXify.sh ./final_pdf/ "2 3 4 6 10" > sub_pops_fixed2.tex
+pdflatex sub_pops_fixed2.tex
+open sub_pops_fixed2.pdf
+
+
+
+### PCA
+
+```{r}
+strB1d.pca <- strB1c %>%
+  spread(locus, allele_int) %>% 
+  mutate(SLG = paste(str_sub(indiv, 1, 4)), .after=indiv, 
+         LOCATION = paste(str_extract(indiv, "^.{1}")),
+         SLG_final = paste(str_sub(indiv, 2,4)))
+
+pca_2 <- strB1d.pca %>%
+  dplyr::select(where(is.numeric)) %>% # retain only numeric columns
+  scale() %>% # scale data
+  prcomp() # do PCA
+
+pcap2_1gg <- pca_2 %>%
+  augment(strB1d.pca) %>% 
+  ggplot(aes(.fittedPC1, .fittedPC2)) + 
+  geom_label(size = 1.5, aes(label = SLG, color = LOCATION)) +
+  theme_classic()+
+  #theme(legend.position = "none")+
+  scale_color_manual(values = c(
+    "darkorange", "dodgerblue1", "goldenrod1", "gray0"
+  ))+
+  ggtitle("PCA: Putah and selected")
+pcap2_1gg
+
+pcap2_1gg <- pca_2 %>%
+  augment(strB1d.pca) %>% 
+  ggplot(aes(.fittedPC1, .fittedPC2)) + 
+  geom_point(size = 1.5, aes(color = SLG)) +
+  theme_classic()+
+   scale_color_manual(values = c(
+    "darkorange", "dodgerblue1", "goldenrod1", "gray0", "gray", "goldenrod1", "goldenrod1","goldenrod1","goldenrod1","goldenrod1","goldenrod1","goldenrod1","tan", "tan","tan","tan","tan"
+  ))+
+  #theme(legend.position = "none")+
+  ggtitle("PCA: Putah and selected")
+pcap2_1gg
+
+```
+
+
+## Putah only
+
+```{r}
+strC0 <- pcastr %>% 
+  mutate(indiv.ID = slg_name) %>% 
+  filter(str_detect(indiv.ID, "^H"))
+
+strC1 <- mhap_transform(
+  long_genos = strC0,
+  program = "2columnformat_numeric"
+)
+
+# stupid bug in column names
+bad <- c("_a3", "_a4", "_a5", "_a6", "_a7", "_a8" )
+strC1a <- strC1[[1]] %>% dplyr::select(-contains(bad))
+
+strC1b <- strC1a %>% 
+  replace(is.na(.), 0)
+
+strC1c <- strC1b %>%
+  pivot_longer(!indiv, names_to = "locus", values_to = "allele_int") %>% 
+  mutate(locus = case_when(
+    str_detect(locus, "_a1$") ~ str_replace(locus, "_a1$", ""),
+    str_detect(locus, "_a2$") ~ str_replace(locus, "_a2$", "_1")))
+
+# change all loci columns to same name (ie no _1 at the end), and remove slg_name from column 1
+
+strC1d <- strC1c %>%
+  spread(locus, allele_int)
+
+names(strC1d)[seq(3,ncol(strC1d), by=2)] <- names(strC1d)[seq(2,ncol(strC1d), by=2)]
+
+names(strC1d)[1] <- ""
+
+# write to table, run STRUCTURE using slg pipe
+write.table(strC1d, "../slg_pipe/arena/slg3_Aug24_put.txt", col.names = TRUE, row.names = FALSE, sep = "\t", quote = FALSE)  
+
+```
+
+
+In terminal, navigate to structure/arena directory
+
+then run:
+../script/pops_list_from_sgl_pipe.sh slg3_Aug24_put.txt > pops3a.txt 
+../script/locus_list_from_sgl_pipe.sh slg3_Aug24_put.txt > locus3a.txt
+../script/Do_standard_analyses.sh slg3_Aug24_put.txt pops3a.txt locus3a.txt PUT_POP_FIXED DefaultSettingsStandard.sh
+
+then navigate to new directory (PUT_POP_FIXED>StructureArea>arena) and run:
+nohup ../script/ExecuteStructureRuns.sh  3  > BIG_LOG.txt  2>&1 &
+
+
+Once this is done running, navigate up a level to clump_and_distruct then run:
+
+./script/ClumpAndDistructAll.sh 6
+./script/LaTeXify.sh ./final_pdf/ "2 3 4 6 10" > put_pops_fixed.tex
+pdflatex put_pops_fixed.tex
+open put_pops_fixed.pdf
+
+
+If you get an error running the first line of code about not finding le2unix, you can try opening the following scripts (in slg_pipe scripts folder) and adding ../bin/ before le2unix (originally has only le2unix, change to ../bin/le2unix):
+* pops_list_from_sgl_pipe.sh
+* locus_list_from_sgl_pipe.sh
+
+### PCA
+
+```{r}
+strC1d.pca <- strC1c %>%
+  spread(locus, allele_int) %>% 
+  mutate(SLG = paste(str_sub(indiv, 1, 4)), .after=indiv, 
+         LOCATION = paste(str_extract(indiv, "^.{1}"))) %>% 
+  dplyr::select(-tag_id_1637_1, -tag_id_3028, -tag_id_4361, -tag_id_4931_1)
+
+pca_3 <- strC1d.pca %>%
+  dplyr::select(where(is.numeric)) %>% # retain only numeric columns
+  scale() %>% # scale data
+  prcomp() # do PCA
+
+pcap3_1gg <- pca_3 %>%
+  augment(strC1d.pca) %>% 
+  ggplot(aes(.fittedPC1, .fittedPC2)) + 
+  geom_label(size = 1.5, aes(label = SLG, color = SLG)) +
+  theme_classic()+
+  #theme(legend.position = "none")+
+ 
+  ggtitle("PCA: Putah")
+pcap3_1gg
+
+```
+
+
+
+
+
+
+
+
