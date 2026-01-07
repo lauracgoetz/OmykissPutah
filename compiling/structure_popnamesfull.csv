@@ -1,0 +1,51 @@
+﻿SLG,STRSLG,LOCATION,WATER_NAME,Water_name,pop_acr
+SCOC,AACO,Coastal_socal,Coldwater Canyon Creek,Coldwater Canyon Creek (COC),COC
+SHIC,ABHI,Coastal_socal,Hilton Creek,Hilton Creek (HIC),HIC
+SPIC,ACPI,Coastal_socal,Piru Creek,Piru Creek (PIC),PIC
+SWSL,ADWS,Coastal_socal,West Fork San Luis Rey,West Fork San Luis Rey (WSL),WSL
+DMCR,BAMC,Coastal_north,McKenzie River,McKenzie River (MCR),MCR
+DSSR,BBSS,Coastal_north,South Santiam River,South Santiam River (SSR),SSR
+DWIR,BCWI,Coastal_north,Willamette River,Willamette River (WIR),WIR
+KHLC,CAHL,Klamath,Horse Linto Creek,Horse Linto Creek (HLC),HLC
+KSHR,CBSH,Klamath,Shasta River,Shasta River (SHR),SHR
+KSPC,CCSP,Klamath,Spring Creek,Spring Creek (SPC),SPC
+CALA,DAAL,Coastal_mid,Alameda Creek,Alameda Creek (ALA),ALA
+CBIC,DBBI,Coastal_mid,Big Creek,Big Creek (BIC),BIC
+CDRC,DCDR,Coastal_mid,Dry Creek,Dry Creek (DRC),DRC
+CEER,DDEE,Coastal_mid,Eel River,Eel River (EER),EER
+CFRC,DEFR,Coastal_mid,Freshwater Creek,Freshwater Creek (FRC),FRC
+CMAR,DFMA,Coastal_mid,Mad River,Mad River (MAR),MAR
+CMFE,DGMF,Coastal_mid,Middle Fork Eel River,Middle Fork Eel River (MFE),MFE
+CTMR,DHTM,Coastal_mid,Little North Fork Ten Mile River,Little North Fork Ten Mile River (TMR),TMR
+HUAC,FAAA,Putah,"Anderson Creek, Above Waterfalls","Anderson Creek, Above Waterfalls (AAW)",UAC
+HUUP,FBUU,Putah,"Upper Upper Putah, Upper Putah/Lower Anderson","Upper Upper Putah, Upper Putah/Lower Anderson (UUP)",UUP
+HLAC,FCLA,Putah,"Lower Anderson Creek, Upper Putah/Lower Anderson","Lower Anderson Creek, Upper Putah/Lower Anderson (LAC)",LAC
+HJAC,FDJA,Putah,James Creek,James Creek (JAC),JAC
+HPOC,FEPO,Putah,Pope Creek,Pope Creek (POC),POC
+HTRC,FFTR,Putah,Trout Creek,Trout Creek (TRC),TRC
+HMIC,FGMI,Putah,Middle Creek,Middle Creek (MIC),MIC
+HLBE,FHLB,Putah,Lake Berryessa,Lake Berryessa (LBE),LBE
+HIDR,FIID,Putah,"Putah Creek, IDR","Putah Creek, IDR (IDR)",IDR
+HANR,FJAN,Putah,"Putah Creek, Anadromous Reach","Putah Creek, Anadromous Reach (ANR)",ANR
+AFRC,GAFR,CVA,Frog Creek,Frog Creek (FRC),FRC
+AMFA,GBMF,CVA,Middle Fork American River,Middle Fork American River (MFA),MFA
+ANRI,GCNR,CVA,North Arm Rice Creek,North Arm Rice Creek (NRI),NRI
+BCOH,GDCO,CVB,Battle Creek,Battle Creek (COH),COH
+BDEC,GEDE,CVB,Deer Creek,Deer Creek (DEC),DEC
+BFER,GFFE,CVB,Feather River,Feather River (FER),FER
+BMOR,GGMO,CVB,Mokelumne River,Mokelumne River (MOR),MOR
+BNIH,GHNI,CVB,American River,American River (NIH),NIH
+RTCO,HRCO,Hatchery,RT-Coleman,RT-Coleman (TCO),TCO
+RTHO,HRHO,Hatchery,RT-Hot Creek,RT-Hot Creek (THO),THO
+RTKA,HRKA,Hatchery,RT-Kamloops,RT-Kamloops (TKA),TKA
+RTPI,HRPI,Hatchery,RT-Pit,RT-Pit (TPI),TPI
+RTSH,HRSH,Hatchery,RT-Shasta,RT-Shasta (TSH),TSH
+IBUC,IBUC,Inland,Buck Creek,Buck Creek (BUC),BUC
+IEAL,IEAL,Inland,Eagle Lake,Eagle Lake (EAL),EAL
+INCL,INCL,Inland,North Fork Clicks Creek,North Fork Clicks Creek (NCL),NCL
+INDE,INDE,Inland,North Fork Deep Creek,North Fork Deep Creek (NDE),NDE
+INSH,INSH,Inland,North Fork Shields Creek,North Fork Shields Creek (NSH),NSH
+ISDE,ISDE,Inland,South Fork Deep Creek,South Fork Deep Creek (SDE),SDE
+ISSH,ISSH,Inland,South Fork Shields Creek,South Fork Shields Creek (SSH),SSH
+NMOC,NMOC,CVA_redband,Moosehead Creek,Moosehead Creek (MOC),MOC
+NSHC,NSHC,CVA_redband,Sheephaven Creek,Sheephaven Creek (SHC),SHC
