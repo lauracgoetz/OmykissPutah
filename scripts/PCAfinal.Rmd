@@ -1,0 +1,145 @@
+---
+title: "Final PCA"
+output: html_notebook
+---
+
+```{r}
+library(ggplot2)
+library(ggforce)
+library(tidyverse)
+```
+
+
+```{r}
+pcastr <- read_csv("../data/PCAstructure_meta_fullaug24.csv")
+```
+Subset dataset (some data wrangling needed here with the specific dataset I'm using), convert to 2col_numeric using microhaplotopia
+
+```{r}
+subset1 <- pcastr %>% 
+  mutate(slg_name = case_when(
+    str_detect(slg_name, "HAAW") ~ str_replace(slg_name, "HAAW", "HUAC"),
+    TRUE ~ paste(slg_name)
+  )) %>% 
+  mutate(indiv.ID = slg_name) %>% 
+  filter(str_detect(indiv.ID, "BFER|CDRC|RTPI|RTSH") | str_detect(indiv.ID, "^H")) %>% 
+  filter(!(str_detect(indiv.ID, "HLBE"))) %>% 
+  mutate(SLG = case_when(
+    SLG == "HAAW" ~ "HUAC",
+    SLG != "HAAW" ~ paste(SLG)
+  )) 
+
+strsubset1 <- mhap_transform(
+  long_genos = subset1,
+  program = "2columnformat_numeric"
+)
+
+# prep for PCA - pull out first column, change NAs to 0s
+
+strsubset1a <- strsubset1[[1]] 
+
+strsubset1b <- strsubset1a %>% 
+  replace(is.na(.), 0)
+
+# pivot_longer to rearrange dataset, use mutate to change locus names (remove _a1 and _a2)
+
+strsubset1c <- strsubset1b %>%
+  pivot_longer(!indiv, names_to = "locus", values_to = "allele_int") %>% 
+  mutate(locus = case_when(
+    str_detect(locus, "_a1$") ~ str_replace(locus, "_a1$", ""),
+    str_detect(locus, "_a2$") ~ str_replace(locus, "_a2$", "_1")))
+
+# spread to rearrange dataset, mutate to data wrangle
+
+strsubset1.pca <- strsubset1c %>%
+  spread(locus, allele_int) %>% 
+  mutate(SLG = paste(str_sub(indiv, 1, 4)), .after=indiv, 
+         LOCATION = paste(str_extract(indiv, "^.{1}")),
+         SLG_final = paste(str_sub(indiv, 2,4)),
+         Simp = case_when(
+           SLG == "HANR" ~ "ANR",
+           SLG == "HIDR" ~ "IDR",
+           SLG == "RTPI" ~ "RTPI",
+           SLG == "RTSH" ~ "RTSH",
+           TRUE ~ paste(LOCATION)
+         )) %>% 
+  mutate(Simp = case_when(
+    Simp == "H" ~ "Putah Creek",
+    Simp == "B" ~ "Central Valley",
+    Simp == "C" ~ "Coastal",
+    TRUE ~ paste(Simp)
+  )) # change labels for plotting
+
+# remove unneccessary stuff for PCA
+use4pca <- strsubset1.pca %>% 
+  select(-indiv, -SLG, -LOCATION, -SLG_final, -Simp)
+  
+mypca <- prcomp(use4pca[,-202]) # change number to number of observations/columns in dataframe
+#Isolate components
+Comps <- as.data.frame(mypca$x)
+#Extract components and bind to original data
+newomg <- cbind(strsubset1.pca,Comps[,c(1,2)]) %>% 
+  group_by(Simp) %>% 
+  mutate(gg1 = mean(PC1), gg2 = mean(PC2))
+#Plot
+pca_sub <- ggplot(newomg, aes(x=PC1, y=PC2, col = Simp, fill = Simp)) +
+  stat_ellipse(geom = "polygon", col= "black", alpha =0.5)+
+  geom_point(shape=21, col="black")+
+  theme_classic()+
+  geom_label(aes(label = Simp, x=gg1, y=gg2, fill = Simp), 
+             color = "black", size = 4, show.legend = FALSE)+
+  scale_color_manual(values = c("goldenrod1", "dodgerblue4",
+                                "darkolivegreen", "salmon2", "darkorange",
+                                "yellowgreen", "tan"
+                                ))+
+  scale_fill_manual(values = c("goldenrod1", "dodgerblue4",
+                                "darkolivegreen", "salmon2", "darkorange",
+                                "yellowgreen", "tan"
+                                ))+
+  theme(legend.position="none")
+  
+ggsave(plot = pca_sub, file = "../figures/PCAf_subset.png", 
+       #bg = "transparent",
+       width = 20, height = 15, units = "cm", dpi = 800)
+
+pca_sub
+```
+
+
+% variance from PCA
+
+PC1 = 0.1441
+PC2 = 0.03561
+
+```{r}
+summary(mypca)
+```
+
+
+```{r}
+#Extract components and bind to original data
+newomg1 <- cbind(strsubset1.pca,Comps[,c(1,43)]) %>% 
+  group_by(Simp) %>% 
+  mutate(gg1 = mean(PC1), gg2 = mean(PC43))
+#Plot
+pca_sub2 <- ggplot(newomg1, aes(x=PC1, y=PC43, col = Simp, fill = Simp)) +
+  stat_ellipse(geom = "polygon", col= "black", alpha =0.5)+
+  geom_point(shape=21, col="black")+
+  theme_classic()+
+  geom_label(aes(label = Simp, x=gg1, y=gg2, fill = Simp), 
+             color = "black", size = 4, show.legend = FALSE)+
+  scale_color_manual(values = c("goldenrod1", "dodgerblue4",
+                                "darkolivegreen", "salmon2", "darkorange",
+                                "yellowgreen", "tan"
+                                ))+
+  scale_fill_manual(values = c("goldenrod1", "dodgerblue4",
+                                "darkolivegreen", "salmon2", "darkorange",
+                                "yellowgreen", "tan"
+                                ))+
+  theme(legend.position="none")
+  
+
+
+pca_sub2
+```
+
