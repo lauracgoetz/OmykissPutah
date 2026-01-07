@@ -1,0 +1,469 @@
+---
+title: "4_popgen"
+output: html_notebook
+---
+
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(PopGenReport)
+library(ggplot2)
+library(strataG)
+```
+
+
+Heterozygosity (He, Ho), allelic richness (Ar), Fst
+
+
+# Allelic richness
+
+uses package PopGenReport
+
+```{r}
+# if you don't have your first two columns named "ind" and "pop" explicitly, this step will not work
+pws <- read.genetable("../data/popgen_2col2_aug24.csv", ind = 1, pop = 2, oneColPerAll = FALSE, sep="/", ploidy = 2)
+
+putaH_ar <- allel.rich(pws, min.alleles = NULL)
+
+mea <- lapply(putaH_ar[["mean.richness"]], '[[', 1)
+
+al.ri <- enframe(mea) %>% 
+  rename("SLG"="name") %>% 
+  mutate(A.r = as.numeric(value)) %>% 
+  select(SLG, A.r)
+
+```
+
+
+# Expected and observed heterozygosity
+
+uses strataG 
+
+```{r}
+all_pop <- read_csv("../data/popgen_2col2_aug24.csv") %>% 
+  rename("SLG"="pop")
+```
+
+This step creates large list with populations grouped for running pop gen analyses using strataG
+```{r}
+gen_di_split <- all_pop %>% 
+  group_by(SLG)
+group_name_df <- group_keys(gen_di_split) %>% 
+  mutate(group_name=SLG)
+group_name <- group_name_df$group_name %>% sort()
+
+genos_het <- gen_di_split %>% 
+  group_by(SLG) %>% 
+  group_split(.keep = FALSE) %>% 
+  setNames(group_name)
+```
+
+
+run strataG on grouped data in list using function
+```{r}
+ho.program.mean <- lapply(genos_het, function(x){
+
+  x <- distinct(x)
+  x[x == 0 ]<-NA
+  
+  gt <- df2gtypes(x, ploidy = 2, strata = NULL, id.col = 1, loc.col = 2)
+  
+  Ho.lo <- heterozygosity(gt, by.strata = FALSE, type = "observed") 
+  #Ho by locus
+
+Ho.stra <- heterozygosity(gt, by.strata = TRUE, type = "observed") 
+  #Ho by stratum and locus
+
+Ho.mean <- heterozygosity(gt, by.strata = FALSE, type = "observed") %>% 
+  summarise(mean(obsvd.het)) #mean Ho over all loci
+  #  mean(obsvd.het)
+})
+
+
+he.program.mean <- lapply(genos_het, function(x){
+
+  x <- distinct(x)
+  x[x == 0 ]<-NA
+  
+  gt <- df2gtypes(x, ploidy = 2, strata = NULL, id.col = 1, loc.col = 2)
+  
+  Ho.lo <- heterozygosity(gt, by.strata = FALSE, type = "observed") 
+  #Ho by locus
+
+Ho.stra <- heterozygosity(gt, by.strata = TRUE, type = "observed") 
+  #Ho by stratum and locus
+
+He.mean <- heterozygosity(gt, by.strata = FALSE, type = "expected") %>% 
+  summarise(mean(exptd.het)) #mean Ho over all loci
+  #  mean(obsvd.het)
+})
+
+# pull out mean He from list, convert to data.frame object, then reorganize for plotting
+MeanHe <- lapply(he.program.mean, '[[', 1) 
+he_mean <- data.frame(MeanHe) %>%
+  gather() %>%
+  rename("SLG"="key", "MeanHe"="value") 
+
+# pull out mean Ho from list, convert to data.frame object, then reorganize for plotting
+MeanHo <- lapply(ho.program.mean, '[[', 1) 
+ho_mean <- data.frame(MeanHo) %>%
+  gather() %>%
+  rename("SLG"="key", "MeanHo"="value") 
+
+# combine tables
+heho <- left_join(he_mean, ho_mean) 
+
+```
+
+# Fst
+
+
+```{r}
+fst_dats <- df2gtypes(all_pop, ploidy = 2, strata = 2, id.col = 1, loc.col = 3)
+fst_anal <- pairwiseTest(fst_dats, stats = "fst")
+
+#write_rds(fst_anal, "../fst.rds")
+
+# create dataframe with population comparisons
+fst_anal_names <- all_pop %>% 
+  select(SLG) %>% 
+  distinct() %>% 
+  mutate(SLG2 = SLG) %>% 
+  expand(SLG, SLG2) %>% 
+  filter(SLG != SLG2) %>% # remove entries that would be comparing a pop to itself
+  filter(SLG < SLG2) %>%  # remove entries where combination already occurred - like popA:popB not popB:popA after
+  mutate(fst_name = paste(SLG, SLG2, sep=":"))
+
+fst_analnmd <- fst_anal %>% 
+  setNames(fst_anal_names$fst_name)
+
+add_on <- tibble("stats" = c(
+  "CHIsq", "Ho", "Hs", "Ht", "Ht_prime", "Dst", "Dst_prime", "Fst", "Fst_prime", "Fis", "Gst_prime", "Gst_dbl_prime", "Dest", "Dest_Chao", "wcFit", "wcFst", "wcFis",
+  "CHIsq.pval", "Ho.pval", "Hs.pval", "Ht.pval", "Ht_prime.pval", "Dst.pval", "Dst_prime.pval", "Fst.pval", "Fst_prime.pval", "Fis.pval", "Gst_prime.pval", "Gst_dbl_prime.pval", "Dest.pval", "Dest_Chao.pval", "wcFit.pval", "wcFst.pval", "wcFis.pval"
+))
+
+options(scipen = 999)
+
+#change back with options(scipen = 0)
+
+all_stats <- as.data.frame(sapply(fst_analnmd, function(x) x[[2]])) %>% 
+  cbind(., add_on) %>% 
+  select(stats, everything()) %>% 
+  pivot_longer(!stats, names_to = "popcomp", values_to = "val") %>% 
+  arrange(stats) %>% 
+  pivot_wider(names_from = stats, values_from = val) %>% 
+  separate(popcomp, sep = ":", into = c("pop1", "pop2"), remove = FALSE) %>%
+  mutate(comppop = paste(pop2, pop1, sep=":"), .after = popcomp) %>% 
+  select(-pop1, -pop2)
+
+# did work above to prepare for this step: make 1 data frame popA:popB and other popB:popA then unite and arrange by first population so all populations have comparison with other populations (strataG doesn't give output with popB:popA only popA:popB)
+
+all_statsf1 <- all_stats %>% 
+  select(-comppop) 
+
+all_statsf2 <- all_stats %>% 
+  select(-popcomp) %>% 
+  rename("popcomp"="comppop")
+
+all_statsf <- rbind(all_statsf1, all_statsf2)
+
+#write_rds(all_statsf, "../tables/all_stats_neutral.rds")
+
+all_statsl <- all_statsf %>% 
+  select(popcomp, Fst)
+
+summstats <- all_statsf %>% 
+  select(pop1, Fst) %>% 
+  group_by(pop1) %>% 
+  mutate(mean_Fst_neutral = mean(Fst)) %>% 
+  select(-Fst) %>% 
+  ungroup() %>% 
+  distinct()
+
+#write_rds(summstats, "../tables/summ_fst_neutral.rds")  
+```
+
+
+make fst table - first column = pop names, column names = pop names
+
+```{r}
+stats_tablework2 <- all_statsl %>% 
+  separate(popcomp, into = c("pop1","pop2"), sep=":") #%>% 
+  right_join(., table1 %>% select(SLG, pop_acr), by=c("pop1"="SLG")) #%>% 
+  select(pop1, pop_acr, pop2, Fst) %>% 
+  rename("pop_acr1"="pop_acr") %>% 
+  right_join(., table1 %>% select(SLG, LOCATION, WATER_NAME, pop_acr), by=c("pop2"="SLG")) %>% 
+  select(pop1, pop_acr1, pop2, pop_acr, Fst) 
+  pivot_wider(names_from = pop2, values_from = Fst)
+```
+
+```{r}
+table1 <- read_csv("../compiling/tableorder.csv")
+
+table_order <- table1 %>% 
+  mutate(pop_acr = case_when(
+    SLG == "CFRC" ~ paste("CRC"),
+    SLG != "CRFC" ~ paste(pop_acr)
+  )) %>% 
+  select(SLG, pop_acr) %>% 
+  mutate(pop_order = as.numeric(paste(row_number()))) %>% 
+  mutate(pop_order = case_when(
+    pop_order < 10 ~ paste(0, row_number(), sep=""),
+    pop_order >= 10 ~ paste(row_number())
+  )) %>% 
+  mutate(pop_orderF = paste(pop_order, pop_acr, sep="_"))
+
+testys <- table_order %>% 
+  select(SLG, pop_orderF, pop_acr) %>% 
+  left_join(., stats_tablework2, by=c("SLG"="pop1")) %>% 
+  rename("pop1"="SLG", "pop1order"="pop_orderF", "pop_acr1"="pop_acr") 
+
+testysb <- table_order %>% 
+  select(SLG, pop_orderF, pop_acr) %>% 
+  left_join(., testys, by=c("SLG"="pop2")) %>% 
+  rename("pop2"="SLG", "pop_acr2"="pop_acr") %>% 
+  arrange(pop1order)
+
+testysc <- testysb %>% 
+  select(pop_acr1, pop_acr2, Fst) %>% 
+  pivot_wider(names_from = pop_acr2, values_from = Fst) %>% 
+  select(pop_acr1, FRC, everything()) %>% 
+  mutate_if(is.numeric, round, 3)
+  
+
+write_csv(testysc, "../tables/Fst_bypops.csv")
+```
+
+
+```{r}
+stats_table <- all_statsl %>% 
+  separate(popcomp, into = c("pop1","pop2"), sep=":") %>% 
+  pivot_wider(names_from = pop2, values_from = Fst) %>% 
+  select(pop1, AFRC, everything()) %>% 
+  mutate_if(is.numeric, round, 3)
+
+# change number of sig figs to like 3 or 4
+
+
+write_csv(stats_table, "../tables/Fst_bypops.csv")
+```
+
+
+
+
+```{r}
+stats_table <- all_statsl %>% 
+  separate(popcomp, into = c("pop1","pop2"), sep=":") %>% 
+  pivot_wider(names_from = pop2, values_from = Fst) %>% 
+  select(pop1, AFRC, everything()) %>% 
+  mutate_if(is.numeric, round, 3)
+
+# change number of sig figs to like 3 or 4
+
+
+write_csv(stats_table, "../tables/Fst_bypops.csv")
+```
+
+
+```{r}
+table1f <- left_join(table1, heho) %>% 
+  left_join(., al.ri) %>% 
+  group_by(LOCATION) %>% 
+  arrange(pop_acr, .by_group = TRUE) %>% 
+  mutate(Water_name = paste(WATER_NAME, " (", pop_acr, ")", sep=""), .after=WATER_NAME)
+```
+
+```{r}
+write_csv(table1f, "../tables/table1_final_aug24.csv")
+```
+
+
+
+
+## Adaptive Fst
+
+```{r}
+all_pop <- read_csv("../data/popgen_adaptive2col2_feb25.csv") %>% 
+  rename("SLG"="pop")
+
+all_pop_omy05 <- all_pop %>% 
+  select(1:12)
+
+all_pop_greb <- all_pop %>% 
+  select(1:2, 13:22)
+
+```
+
+### Omy05 - Fst 
+
+```{r}
+fst_dats5 <- df2gtypes(all_pop_omy05, ploidy = 2, strata = 2, id.col = 1, loc.col = 3)
+fst_anal5 <- pairwiseTest(fst_dats5, stats = "fst")
+
+# create dataframe with population comparisons
+fst_anal_names <- all_pop_omy05 %>% 
+  select(SLG) %>% 
+  distinct() %>% 
+  mutate(SLG2 = SLG) %>% 
+  expand(SLG, SLG2) %>% 
+  filter(SLG != SLG2) %>% # remove entries that would be comparing a pop to itself
+  filter(SLG < SLG2) %>%  # remove entries where combination already occurred - like popA:popB not popB:popA after
+  mutate(fst_name = paste(SLG, SLG2, sep=":"))
+
+fst_analnmd5 <- fst_anal5 %>% 
+  setNames(fst_anal_names$fst_name)
+
+add_on <- tibble("stats" = c(
+  "CHIsq", "Ho", "Hs", "Ht", "Ht_prime", "Dst", "Dst_prime", "Fst", "Fst_prime", "Fis", "Gst_prime", "Gst_dbl_prime", "Dest", "Dest_Chao", "wcFit", "wcFst", "wcFis",
+  "CHIsq.pval", "Ho.pval", "Hs.pval", "Ht.pval", "Ht_prime.pval", "Dst.pval", "Dst_prime.pval", "Fst.pval", "Fst_prime.pval", "Fis.pval", "Gst_prime.pval", "Gst_dbl_prime.pval", "Dest.pval", "Dest_Chao.pval", "wcFit.pval", "wcFst.pval", "wcFis.pval"
+))
+
+options(scipen = 999)
+
+#change back with options(scipen = 0)
+
+all_stats5 <- as.data.frame(sapply(fst_analnmd5, function(x) x[[2]])) %>% 
+  cbind(., add_on) %>% 
+  select(stats, everything()) %>% 
+  pivot_longer(!stats, names_to = "popcomp", values_to = "val") %>% 
+  arrange(stats) %>% 
+  pivot_wider(names_from = stats, values_from = val) %>% 
+  separate(popcomp, sep = ":", into = c("pop1", "pop2"), remove = FALSE) %>%
+  mutate(comppop = paste(pop2, pop1, sep=":"), .after = popcomp) %>% 
+  select(-pop1, -pop2)
+
+# did work above to prepare for this step: make 1 data frame popA:popB and other popB:popA then unite and arrange by first population so all populations have comparison with other populations (strataG doesn't give output with popB:popA only popA:popB)
+
+all_statsf15 <- all_stats5 %>% 
+  select(-comppop) 
+
+all_statsf25 <- all_stats5 %>% 
+  select(-popcomp) %>% 
+  rename("popcomp"="comppop")
+
+all_statsf5 <- rbind(all_statsf15, all_statsf25)
+
+write_rds(all_statsf5, "../tables/all_stats_adaptive_Omy05.rds")
+
+all_statsl5 <- all_statsf5 %>% 
+  select(popcomp, Fst) %>% 
+  separate(popcomp, sep = ":", into = c("pop1", "pop2"), remove = FALSE)
+
+summstats5 <- all_statsl5 %>% 
+  select(pop1, Fst) %>% 
+  group_by(pop1) %>% 
+  mutate(mean_Fst_neutral = mean(Fst)) %>% 
+  select(-Fst) %>% 
+  ungroup() %>% 
+  distinct()
+
+write_rds(summstats5, "../tables/summ_fst_adaptive_Omy05.rds")  
+```
+
+#### Table S5
+
+Table S5
+
+make fst table - first column = pop names, column names = pop names
+
+```{r}
+table1 <- read_csv("../compiling/tableorder.csv") %>% 
+  slice(41:50) %>%  # putah only
+  filter(pop_acr != "LBE") # remove lake berryessa bc not genotyped for adaptive mhaps
+
+table_order <- table1 %>% 
+  select(SLG, pop_acr) %>% 
+  mutate(pop_orderF = paste(as.numeric(paste(row_number())), pop_acr, sep="_"))
+
+# part 1 - format the pop names (pop1) which will be the column of names 
+tables5.1 <- all_statsl5 %>% 
+  left_join(., table_order, by=c("pop1"="SLG")) %>% 
+  rename("pop1order"="pop_orderF", "pop_acr1"="pop_acr") %>%  # this is the corrected name column
+  arrange(pop1order) %>% 
+  left_join(., table_order, by=c("pop2"="SLG")) %>% 
+  rename("pop2order"="pop_orderF", "pop_acr2"="pop_acr") %>% 
+  arrange(pop2order, pop1order)
+
+tables5.2 <- tables5.1 %>% 
+  select(pop_acr1, pop_acr2, Fst) %>% 
+  pivot_wider(names_from = pop_acr2, values_from = Fst)
+
+
+write_csv(tables5.2, "../tables/tableS5_adaptFst_Omy05.csv")
+```
+
+
+### Greb1L - Fst
+
+```{r}
+fst_dats <- df2gtypes(all_pop_greb, ploidy = 2, strata = 2, id.col = 1, loc.col = 3)
+fst_anal <- pairwiseTest(fst_dats, stats = "fst")
+
+
+fst_analnmd <- fst_anal %>% 
+  setNames(fst_anal_names$fst_name)
+
+
+
+all_stats <- as.data.frame(sapply(fst_analnmd, function(x) x[[2]])) %>% 
+  cbind(., add_on) %>% 
+  select(stats, everything()) %>% 
+  pivot_longer(!stats, names_to = "popcomp", values_to = "val") %>% 
+  arrange(stats) %>% 
+  pivot_wider(names_from = stats, values_from = val) %>% 
+  separate(popcomp, sep = ":", into = c("pop1", "pop2"), remove = FALSE) %>%
+  mutate(comppop = paste(pop2, pop1, sep=":"), .after = popcomp) %>% 
+  select(-pop1, -pop2)
+
+# did work above to prepare for this step: make 1 data frame popA:popB and other popB:popA then unite and arrange by first population so all populations have comparison with other populations (strataG doesn't give output with popB:popA only popA:popB)
+
+all_statsf1 <- all_stats %>% 
+  select(-comppop) 
+
+all_statsf2 <- all_stats %>% 
+  select(-popcomp) %>% 
+  rename("popcomp"="comppop")
+
+all_statsf <- rbind(all_statsf1, all_statsf2)
+
+write_rds(all_statsf, "../tables/all_stats_adaptive_Greb1L.rds")
+
+all_statsl <- all_statsf %>% 
+  select(popcomp, Fst) %>% 
+  separate(popcomp, sep = ":", into = c("pop1", "pop2"), remove = FALSE)
+
+summstats <- all_statsl %>% 
+  select(pop1, Fst) %>% 
+  group_by(pop1) %>% 
+  mutate(mean_Fst_neutral = mean(Fst)) %>% 
+  select(-Fst) %>% 
+  ungroup() %>% 
+  distinct()
+
+write_rds(summstats, "../tables/summ_fst_adaptive_Greb1L.rds")  
+```
+
+#### Table S6
+
+make fst table - first column = pop names, column names = pop names
+
+```{r}
+# part 1 - format the pop names (pop1) which will be the column of names 
+tables6.1 <- all_statsl %>% 
+  left_join(., table_order, by=c("pop1"="SLG")) %>% 
+  rename("pop1order"="pop_orderF", "pop_acr1"="pop_acr") %>%  # this is the corrected name column
+  arrange(pop1order) %>% 
+  left_join(., table_order, by=c("pop2"="SLG")) %>% 
+  rename("pop2order"="pop_orderF", "pop_acr2"="pop_acr") %>% 
+  arrange(pop2order, pop1order)
+
+tables6.2 <- tables6.1 %>% 
+  select(pop_acr1, pop_acr2, Fst) %>% 
+  pivot_wider(names_from = pop_acr2, values_from = Fst)
+
+
+write_csv(tables6.2, "../tables/tableS6_adaptFst_Greb1L.csv")
+```
+
+
