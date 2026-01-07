@@ -1,0 +1,591 @@
+---
+title: "2_microhaps"
+output: html_notebook
+---
+
+
+Install microhaplotopia package if needed:
+```{r}
+library(devtools)
+install_github("eriqande/microhaplotopia", ref = "emc-edits" , build_vignettes = FALSE, force = TRUE)
+install_github("eriqande/microhaplotopia", build_vignettes = FALSE, force = TRUE)
+```
+
+
+```{r}
+library(microhaplotopia)
+library(tidyverse)
+library(ggplot2)
+library(adegenet)
+library(dplyr)
+```
+
+
+14 of these microhap markers are not actually neutral and are linked to inversion on Omy05 - so lets load those in and filter them out
+
+```{r}
+liarloci <- read_csv("../compiling/LinkedLiarLoci.csv")
+```
+
+Microhap processing summary:
+
+Microhaplotypes from 2,075 individuals at 124 total microhaplotype markers were processed using R package microhaplotopia. 15 of these loci mapped to Omy05 and were removed, with 109 loci for microhaplotype processing. (see liarloci list). 
+
+Loci with more than 20% total problematic genotypes across samples that either: did not call confidently, or containing deletions compared to the reference, (NX genotypes) were identified and removed, leaving 91 loci for further processing. After filtering for problematic loci, microhaplotype sequences for all populations were first batch filtered by: a minimum haplotype depth of five reads, a minimum total depth of 20 reads, and a 0.3 ratio of second haplotype read depth to first haplotype read depth (allelic balance). 
+
+This removed 13 individuals, reducing the initial 2,075 individuals to 2,062. 7 of these removed individuals were samples from Putah Creek. 114 individuals missing genotypes for more than 85/104 loci were removed, retaining only individuals with a minimum of 19 loci. Of the 114 removed individuals, 14 were from Putah Creek. Overall, processing resulted in a final dataset containing 1,948 genotyped individuals for population genetic analysis, with 175 total individuals from Putah Creek. 
+
+
+# Load in microhaps
+
+and filter out the secretly Omy05 markers from the neutral haps
+
+```{r}
+hap_raw <- microhaplotopia::read_unfiltered_observed("../observed_unfiltered_haps") %>% 
+  filter(!(locus %in% liarloci$LinkedLiarLoci))
+```
+
+adaptive haps
+```{r}
+hapdaptos <- microhaplotopia::read_unfiltered_observed("../adaptive_haps")
+```
+
+
+# Filter for only individuals with metadata
+
+formatted metadata file from first script - allow us to only work with samples we have metadata for
+```{r}
+meta_bind <- read_csv("../data/SH_metadata.csv")
+
+putah_list <- meta_bind %>% 
+  filter(LOCATION == "Putah") %>% 
+  select(MISEQ_ID, LOCATION, SLG)
+```
+
+
+
+```{r}
+haps_met <- hap_raw %>% 
+  filter(indiv.ID %in% meta_bind$MISEQ_ID)
+
+adapto_met <- hapdaptos %>% 
+  filter(indiv.ID %in% meta_bind$NMFS_DNA_ID)
+
+```
+
+
+
+# Raw counts
+
+neutral counts
+```{r}
+fresh_neuts_filt_ct <- hap_raw %>% 
+  distinct(indiv.ID)%>% 
+  left_join(., meta_bind, by=c("indiv.ID"="MISEQ_ID"))
+
+fresh_neuts_filt_ct2 <- fresh_neuts_filt_ct %>% 
+  group_by(SLG) %>% 
+  count()
+```
+
+adaptive counts
+```{r}
+fresh_adapts_filt_ct <- hapdaptos %>% 
+  distinct(indiv.ID)%>% 
+  left_join(., meta_bind, by=c("indiv.ID"="NMFS_DNA_ID"))
+
+fresh_adapts_filt_ct2 <- fresh_adapts_filt_ct %>% 
+  group_by(SLG) %>% 
+  count()
+```
+
+
+
+# Remove NX loci from neutral
+
+This step allows us to save more observations
+
+Remove loci with more than 20% failed (NX) genotypes
+
+```{r}
+locicheck1a <- haps_met %>% 
+  mutate(NXcol = case_when(
+    str_detect(haplo, "N|X") ~ paste("NX"),
+    TRUE ~ paste("NA")
+  )) %>% 
+  group_by(locus) %>% 
+  count(NXcol) %>%
+  mutate(freq = n/sum(n))
+
+loc_ct <- locicheck1a %>% 
+  distinct(locus)
+
+locicheck1b <- locicheck1a %>% 
+  filter(NXcol == "NX" & freq > 0.19)
+# how many loci removed
+
+locicheck1agg <- ggplot(locicheck1a)+
+  geom_col(aes(x=locus, y=freq, fill = NXcol), position = position_fill(reverse = TRUE))+
+  theme_classic()+
+  scale_fill_manual(values = c("green3", "red3"))+
+  scale_y_continuous(breaks = seq(0, 1, 0.2))+
+   theme(axis.text.x = element_text(size=5, angle = 90, vjust = 0.5, hjust=1))+
+  ggtitle("NXs by locus - before filtering by >0.19")+
+  labs(y="%", x="locus")
+
+locicheck1agg
+```
+
+
+```{r}
+haps_use <- haps_met %>% 
+  filter(!(locus %in% locicheck1b$locus))
+
+# check graph again
+
+locicheck1c <- haps_use %>% 
+  mutate(NXcol = case_when(
+    str_detect(haplo, "N|X") ~ paste("NX"),
+    TRUE ~ paste("NA")
+  )) %>% 
+  group_by(locus) %>% 
+  count(NXcol) %>%
+  mutate(freq = n/sum(n))
+
+
+locicheck1bgg <- ggplot(locicheck1c)+
+  geom_col(aes(x=locus, y=freq, fill = NXcol), position = position_fill(reverse = TRUE))+
+  theme_classic()+
+  scale_fill_manual(values = c("green3", "red3"))+
+  scale_y_continuous(breaks = seq(0, 1, 0.2))+
+   theme(axis.text.x = element_text(size=5, angle = 90, vjust = 0.5, hjust=1))+
+  ggtitle("NXs by locus - after filtering by >0.19")+
+  labs(y="%", x="locus")
+
+locicheck1bgg
+```
+
+
+save final list of loci to table
+```{r}
+loci_all <- hap_raw %>% 
+  dplyr::select(locus) %>% 
+  distinct() 
+
+final_loci <- haps_use %>% 
+  dplyr::select(locus) %>% 
+  distinct() %>% 
+  mutate(keep = "keep")
+
+loci_tabl <- left_join(loci_all, final_loci)
+
+
+# adaptive mhaps loci list
+loci_adapt <- hapdaptos %>% 
+  select(locus) %>% 
+  distinct()
+
+write_csv(loci_tabl, "../tables/S2_final_loci2025.csv")
+```
+
+
+# Check out NX for adaptos - - -NONE
+
+```{r}
+locicheck1a.1 <- adapto_met %>% 
+  mutate(NXcol = case_when(
+    str_detect(haplo, "N|X") ~ paste("NX"),
+    TRUE ~ paste("NA")
+  )) %>% 
+  group_by(locus) %>% 
+  count(NXcol) %>%
+  mutate(freq = n/sum(n))
+
+loc_ct.1 <- locicheck1a.1 %>% 
+  distinct(locus)
+
+locicheck1b.1 <- locicheck1a.1 %>% 
+  filter(NXcol == "NX" & freq > 0.19)
+# how many loci removed
+
+locicheck1agg.1 <- ggplot(locicheck1a.1)+
+  geom_col(aes(x=locus, y=freq, fill = NXcol), position = position_fill(reverse = TRUE))+
+  theme_classic()+
+  scale_fill_manual(values = c("green3", "red3"))+
+  scale_y_continuous(breaks = seq(0, 1, 0.2))+
+   theme(axis.text.x = element_text(size=5, angle = 90, vjust = 0.5, hjust=1))+
+  ggtitle("NXs by locus - before filtering by >0.19")+
+  labs(y="%", x="locus")
+
+locicheck1agg.1
+```
+
+
+
+# Light filter
+
+This step uses filter_raw_microhap_data to filter for haplo depth, total depth, and allele balance
+
+## neutral
+
+```{r}
+haps_filt1 <- filter_raw_microhap_data(
+  haps_use,
+  haplotype_depth = 5,
+  total_depth = 20,
+  allele_balance = 0.3
+)
+
+
+haps_filt_ct <- haps_filt1 %>% 
+  distinct(indiv.ID)%>% 
+  left_join(., meta_bind, by=c("indiv.ID"="MISEQ_ID"))
+
+haps_filt_ct2 <- haps_filt_ct %>% 
+  group_by(SLG) %>% 
+  count()
+```
+
+
+
+## adaptive
+
+```{r}
+ahaps_filt1 <- filter_raw_microhap_data(
+  adapto_met,
+  haplotype_depth = 5,
+  total_depth = 20,
+  allele_balance = 0.3
+)
+
+
+ahaps_filt_ct <- ahaps_filt1 %>% 
+  distinct(indiv.ID)%>% 
+  left_join(., meta_bind, by=c("indiv.ID"="MISEQ_ID"))
+
+ahaps_filt_ct2 <- ahaps_filt_ct %>% 
+  group_by(SLG) %>% 
+  count()
+```
+
+
+check for duplicates:
+
+```{r}
+dups_e <- find_duplicates(haps_filt1)
+dups_a <- find_duplicates(ahaps_filt1)
+```
+
+
+# Identify missing data
+
+```{r}
+himiss1 <- microhaplotopia::calculate_missing_data(haps_filt1)
+
+
+miss.1gg<-ggplot(data=himiss1, aes(x=reorder(indiv.ID, n_miss), y=n_miss)) +
+  geom_bar(stat="identity")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 3))
+  
+missing_samples1 <- microhaplotopia::find_missing_samples(hap_raw, haps_filt1) # what was filtered out - 2,380 samples
+
+
+miss.1gg
+
+```
+
+
+```{r}
+ahimiss1 <- microhaplotopia::calculate_missing_data(ahaps_filt1)
+
+
+amiss.1gg<-ggplot(data=ahimiss1, aes(x=reorder(indiv.ID, n_miss), y=n_miss)) +
+  geom_bar(stat="identity")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 3))
+  
+amissing_samples1 <- microhaplotopia::find_missing_samples(hapdaptos, haps_filt1) # what was filtered out - 174
+
+
+amiss.1gg
+
+```
+
+
+# Filter by minimum number of missing loci
+
+## neutral
+
+```{r}
+haps_filt2 <- filter_missing_data(long_genos = haps_filt1, n_miss = 85) # n_miss is smallest acceptable number of loci to miss data for, anything higher will be removed
+
+haps1_met_ct <- haps_filt1 %>% 
+  distinct(indiv.ID) %>% 
+  left_join(., meta_bind, by=c("indiv.ID"="MISEQ_ID"))
+
+
+
+
+haps2_met_ct <- haps_filt2 %>% 
+  distinct(indiv.ID) %>% 
+  left_join(., meta_bind, by=c("indiv.ID"="MISEQ_ID"))
+
+# 2048 now 
+
+missing_samples2 <- microhaplotopia::find_missing_samples(hap_raw, haps_filt2) 
+miss2_met_ct <- missing_samples2 %>% 
+  distinct(indiv.ID) # something wrong with this function or how i interpret it to work!
+
+himiss2 <- microhaplotopia::calculate_missing_data(haps_filt2)
+
+# And plot it up - may take awhile for large projects
+miss.2gg<-ggplot(data=himiss2, aes(x=reorder(indiv.ID, n_miss), y=n_miss)) +
+  geom_bar(stat="identity")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 3))
+
+
+miss.2gg
+```
+
+
+This step isn't needed for the adaptive haps
+
+# Contaminated samples
+
+Samples with more than 2 alleles at a locus
+
+neutral: haps_filt2
+adaptive: ahaps_filt1
+
+```{r}
+contam_neutral <- find_contaminated_samples(haps_filt2, haplotype_depth = 5, total_depth = 20, allele_balance = 0.3) 
+
+# just filter out? 
+haps_filt3 <- haps_filt2 %>% 
+  anti_join(contam_neutral) 
+
+test_df <- haps_filt3 %>%
+    count(indiv.ID,locus) # all good!
+
+
+contam_adaptive <- find_contaminated_samples(ahaps_filt1, haplotype_depth = 5,
+  total_depth = 20,
+  allele_balance = 0.3) # none! yay!
+```
+
+
+# Add second allele to homozygote genotypes
+
+neutral: haps_filt3
+adaptive: ahaps_filt1
+
+```{r}
+haps_filt4 <- add_hom_second_allele(haps_filt3)
+
+ahaps_filt2 <- add_hom_second_allele(ahaps_filt1)
+```
+
+
+
+
+# Summary of everything
+
+```{r}
+# start: neutral
+fresh_neuts_filt_ct <- hap_raw %>% 
+  distinct(indiv.ID)%>% 
+  left_join(., meta_bind, by=c("indiv.ID"="MISEQ_ID"))
+
+fresh_neuts_filt_ct2 <- fresh_neuts_filt_ct %>% 
+  group_by(SLG) %>% 
+  count()
+
+# start: adaptive
+fresh_adapts_filt_ct <- hapdaptos %>% 
+  distinct(indiv.ID)%>% 
+  left_join(., meta_bind, by=c("indiv.ID"="NMFS_DNA_ID"))
+
+fresh_adapts_filt_ct2 <- fresh_adapts_filt_ct %>% 
+  group_by(SLG) %>% 
+  count()
+
+# light filter: neutral
+
+haps_filt_ct <- haps_filt1 %>% 
+  distinct(indiv.ID)%>% 
+  left_join(., meta_bind, by=c("indiv.ID"="MISEQ_ID"))
+
+haps_filt_ct2 <- haps_filt_ct %>% 
+  group_by(SLG) %>% 
+  count()
+
+# light filter: adaptive
+
+ahaps_filt_ct <- ahaps_filt1 %>% 
+  distinct(indiv.ID)%>% 
+  left_join(., meta_bind, by=c("indiv.ID"="NMFS_DNA_ID"))
+
+ahaps_filt_ct2 <- ahaps_filt_ct %>% 
+  group_by(SLG) %>% 
+  count()
+
+# minimum loci: neutral
+
+haps2_met_ct <- haps_filt2 %>% 
+  distinct(indiv.ID) %>% 
+  left_join(., meta_bind, by=c("indiv.ID"="MISEQ_ID"))
+
+haps_filt_ct3 <- haps2_met_ct %>% 
+  group_by(SLG) %>% 
+  count()
+
+haps_filt4 <- haps_filt3
+
+# neutral final
+haps_4_ct <- haps_filt4 %>% 
+  distinct(indiv.ID) %>% 
+  left_join(., meta_bind, by=c("indiv.ID"="MISEQ_ID"))
+
+haps_filt_ct4 <- haps_4_ct %>% 
+  group_by(SLG) %>% 
+  count()
+
+# adaptive final
+
+ahaps_filt2 <- ahaps_filt1
+
+ahaps2_met_ct <- ahaps_filt2 %>% 
+  distinct(indiv.ID) %>% 
+  left_join(., meta_bind, by=c("indiv.ID"="NMFS_DNA_ID"))
+
+ahaps_filt_ct2 <- ahaps2_met_ct %>% 
+  group_by(SLG) %>% 
+  count()
+
+```
+
+
+# Convert
+
+
+Try converting now
+
+neutral: haps_filt4
+adaptive: ahaps_filt2
+
+```{r}
+micrhps_2col_neutral <- mhap_transform(
+  long_genos = haps_filt4,
+  program = "2col_numeric")
+
+micrhps_2coln <- micrhps_2col_neutral[[1]] %>% 
+  
+```
+
+```{r}
+micrhps_2col_adaptive <- mhap_transform(
+  long_genos = ahaps_filt2,
+  program = "2col_numeric")
+
+micrhps_2cola <- micrhps_2col_adaptive[[1]]
+```
+
+
+
+# Formatting for analysis
+
+Need to format for:
+
+* STRUCTURE and PCAs
+* pop gen - separate alleles with a "/" + two column (one col per locus allele)
+
+
+## One column per genotype:
+
+only needed for neutral mhaps
+
+```{r}
+# replace NAs
+micrhps_2coln1 <- micrhps_2coln %>% 
+  left_join(., meta_bind, by=c("indiv"="MISEQ_ID")) %>% 
+  dplyr::select(indiv, tag_id_1092_a1:tag_id_986_a2) %>% 
+  pivot_longer(!indiv, names_to = "locus", values_to = "allele_int") %>% 
+  mutate(locus = case_when(
+    str_detect(locus, "_a1$") ~ str_replace(locus, "_a1$", ""),
+    str_detect(locus, "_a2$") ~ str_replace(locus, "_a2$", "")))  
+  
+micrhps_2coln1[is.na(micrhps_2coln1)]<-0
+
+micrhps_2colnf <- micrhps_2coln1 %>%   
+  group_by(indiv, locus) %>% 
+  mutate(genos = paste0(allele_int, collapse="/")) %>% 
+  dplyr::select(indiv, locus, genos) %>% 
+  distinct() %>% 
+  pivot_wider(names_from=locus, values_from = genos) %>% 
+  left_join(., meta_bind, by=c("indiv"="MISEQ_ID"))
+
+
+
+micrhps_2colnf <- micrhps_2coln2 %>% 
+  dplyr::select(indiv, SLG, tag_id_1092:tag_id_986)
+
+write_csv(micrhps_2colnf, "../data/popgen_2col_feb25.csv")
+```
+
+
+
+## Two cols per genotype
+
+### micrhps_2coln = converted neutral
+
+```{r}
+mhaps2col2n <- micrhps_2coln %>% 
+  left_join(., meta_bind, by=c("indiv"="MISEQ_ID")) %>% 
+  dplyr::select(indiv, tag_id_1092_a1:tag_id_986_a2) %>% 
+  pivot_longer(!indiv, names_to = "locus", values_to = "allele_int") %>% 
+  mutate(locus = case_when(
+    str_detect(locus, "_a1$") ~ str_replace(locus, "_a1$", ""),
+    str_detect(locus, "_a2$") ~ str_replace(locus, "_a2$", "_1"))) %>% 
+  pivot_wider(names_from = locus, values_from = allele_int)
+
+
+mhaps2col2n[is.na(mhaps2col2n)]<-0
+
+micrhps_2col2nf <- left_join(mhaps2col2n, meta_bind %>% dplyr::select(MISEQ_ID, SLG), by=c("indiv"="MISEQ_ID") ) %>% 
+ dplyr::select(indiv, SLG, everything()) %>% 
+  rename("ind"="indiv", "pop"="SLG")
+
+write_csv(micrhps_2col2nf, "../data/popgen_2col2_feb25.csv")
+
+```
+
+
+### now for adaptive
+
+micrhps_2cola = converted
+
+```{r}
+mhaps2col2a <- micrhps_2cola %>% 
+  left_join(., meta_bind, by=c("indiv"="NMFS_DNA_ID")) %>% 
+  dplyr::select(indiv, Omy_Ch05_10_57417407_a1:Omy_Ch28_greb1_mhap8_a2) %>% 
+  pivot_longer(!indiv, names_to = "locus", values_to = "allele_int") %>% 
+  mutate(locus = case_when(
+    str_detect(locus, "_a1$") ~ str_replace(locus, "_a1$", ""),
+    str_detect(locus, "_a2$") ~ str_replace(locus, "_a2$", "_1"))) %>% 
+  pivot_wider(names_from = locus, values_from = allele_int)
+
+
+mhaps2col2a[is.na(mhaps2col2a)]<-0
+
+micrhps_2col2af <- left_join(mhaps2col2a, meta_bind %>% dplyr::select(NMFS_DNA_ID, SLG), by=c("indiv"="NMFS_DNA_ID") ) %>% 
+ dplyr::select(indiv, SLG, everything()) %>% 
+  rename("ind"="indiv", "pop"="SLG")
+
+write_csv(micrhps_2col2af, "../data/popgen_adaptive2col2_feb25.csv")
+```
+
+
+
+
+
+
+
