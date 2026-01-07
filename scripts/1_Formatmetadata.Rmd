@@ -1,0 +1,315 @@
+---
+title: "1_metadata"
+output: html_notebook
+---
+
+Goal: Determine genetic identity of Putah Creek from the Interdam Reach (IDR) and Anadromous Reach using new microhap panel with 124 loci
+
+
+This script doesn't need to be shared publicly, but this is the process used to consolidate the metadata file. 
+
+# Overview 
+
+
+1. Compile metadata from SWFSC MEGA lab, CDFW, and new genotypes from Putah Creek that were also processed by SWFSC MEGA lab
+2. Compile microhaplotype dataset using package 'microhaplotopia' ; filter
+3. Prepare data for pop gen analyses: 
+- remove unnecessary populations, add population regions + acronyms, prep for slg_pipeline (STRUCTURE)
+4. Population genetics analyses: 
+- STRUCTURE plots, PCAs, Heterozygosity (He and Ho), Allelic Richness
+5. Figures: prep final figures, make maps
+6. Final methods and results: 
+- Map: Putah Creek 
+- summarize how microhap dataset compiled and # samples removed, etc, summarize population removal and prep for pop gen analysis
+- Table One: Region, Population Name, Acronym, # samples received, # samples genotyped, # samples for analysis, He, Ho, AR
+- results: summarize reasoning of Putah Creek IDR/Anad Reach identity
+- STRUCTURE and PCA plots
+
+
+# 1. Compiling metadata
+
+Bring in metadata and deal with errors: 
+- SWFSC lab populations 
+- repository tabs from M1329 and M1371 
+
+```{r}
+library(tidyverse)
+library(dplyr)
+```
+
+## Load in all metadata files located in meta folder, bind SWFSC genotypes metadata
+
+Metadata isn't uniformly formatted, too difficult to wrangle within a list, so going to load in each separately. Files will be grouped based on similarities.
+
+CDFW didn't provide metadata, so need to extract appropriate columns from the genotypes
+
+```{r}
+
+m2a <- read_csv("../meta/fw_M1329_corrected.csv") # 999
+m2b <- read_csv("../meta/fw_M1371_corrected.csv") # 999
+m3 <- read_csv("../meta/lab_pop_meta.csv") # 4,028
+m4a <- read_csv("../meta/respository_M1329.csv") #999
+m4b <- read_csv("../meta/repository_M1371.csv") # 999
+m5 <- read_csv("../meta/cdfw_meta_2.csv") # microhap reads - over 1mil
+
+
+# there were a lot of metadata errors in the putah creek samples that we solved after these steps happened - I changed the csvs manually then changed the file upload to the corrected files. There has been 5+ meetings/email chains about the metadata, so keeping "corrected" files for version history
+```
+
+
+m2a,m2b,m4a and m4b are most recent dataset (Putah Creek), need to compile first and send to Eric and Devon.
+
+```{r}
+# combine m2a+m2b; m4a+m4b
+# select necessary columns and filter out empty rows dfd
+
+m2 <- rbind(m2a, m2b) %>% 
+  select(1:13) %>% 
+  filter(!is.na(NMFS_DNA_ID))
+
+m4 <- rbind(m4a, m4b) %>% 
+  select(1:22) %>% 
+  filter(!is.na(NMFS_DNA_ID))
+
+
+
+# join together
+
+putah <- left_join(m4,m2) %>% 
+  filter(!is.na(WATER_NAME)) %>% 
+  mutate(WATER_NAME = case_when(
+    str_detect(WATER_NAME, "Anderson") | str_detect(WATER_NAME, "Putah") ~ paste(WATER_NAME, REACH_SITE, sep = ", "),
+    TRUE ~ paste(WATER_NAME)
+  ))
+
+putah_ct <- putah %>% 
+  group_by(WATER_NAME, REACH_SITE) %>% 
+  count()
+
+
+write_csv(putah, "../data/putah_creek_metadata.csv")
+```
+
+now bind with m3 = SWFSC metadata
+```{r}
+# determine what variables/columns not shared
+
+m_x1 <- tibble(
+  lab = paste(names(m3))
+)
+
+m_x2 <- tibble(
+  lab = paste(names(putah))
+)
+
+# remove NMFS_DNA_ID.1 from m3
+
+# metadata minus CDFW data
+
+meta1 <- rbind(putah, m3 %>% select(-NMFS_DNA_ID.1))
+
+m_x2
+
+```
+
+
+
+## Join on miseq ids 
+
+These are from the NMFS lab, the CDFW data doesn't have these
+
+```{r}
+miseq <- read_csv("../meta/miseq_ids.csv")
+
+# not all ids formatted correctly, need to extract them from new ids - formatted "NMFS_DNA_ID"_"BoxID"_"Cell"
+
+miseq_fix <- miseq %>% 
+  filter(str_detect(NMFS_DNA_ID, "_")) %>% 
+  mutate(NMFS_DNA_ID = str_split(NMFS_DNA_ID, "_", simplify = TRUE)[ , 1])
+
+miseq_use <- miseq %>% 
+  filter(!str_detect(NMFS_DNA_ID, "_"))
+
+miseq_bind <- rbind(miseq_use, miseq_fix)
+
+meta1a <- left_join(meta1, miseq_bind) %>% 
+  mutate(WATER_NAME = case_when(
+    str_detect(HATCHERY, "Nimbus") | str_detect(HATCHERY, "Feather") | str_detect(HATCHERY, "Mokelumne") | str_detect(HATCHERY, "Coleman") ~ paste(WATER_NAME, HATCHERY, sep=", "),
+    TRUE~ paste(WATER_NAME)
+  ))
+
+```
+
+
+m5 = CDFW data, needs to be most formatted to resemble others
+
+only have IDs and population information
+
+
+```{r}
+# indiv.id is NMFS_DNA_ID and SAMPLE_ID, will use group for WATER_NAME
+
+cdfw <- m5 %>% 
+  select(indiv.ID, group) %>% 
+  distinct(indiv.ID, group) %>% 
+  mutate(NMFS_DNA_ID = paste(indiv.ID)) %>% 
+  rename("SAMPLE_ID"="indiv.ID", "WATER_NAME"="group") %>% 
+  mutate(AGE=NA, BATCH_ID=NA, BOX_ID=NA, BOX_POSITION=NA, COLLECTION_DATE=NA, COUNTY_F=NA, ESTIMATED_DATE=NA, GENUS="Oncorhynchus", HATCHERY=NA, HATCHERY_MARK=NA, LATITUDE_F=NA, LEFTOVER_SAMPLE=NA, LENGTH=NA, LOCATION_COMMENTS_F=NA, LONGITUDE_F=NA, PHENOTYPE=NA, PICK_DATE=NA, PICKER=NA, PROJECT_NAME=NA, REACH_SITE="CDFW_data", REPORTED_LIFE_STAGE=NA, SAMPLE_COMMENTS=NA, SEX=NA, SPECIES="mykiss", STATE_F=NA, STRAIN=NA, TAG_NUMBER=NA, TRIB_1=NA, TRIB_2=NA, WATERSHED=NA, WEIGHT=NA) %>% 
+  select(NMFS_DNA_ID, BOX_ID, BOX_POSITION, SAMPLE_ID, BATCH_ID, PROJECT_NAME, GENUS, SPECIES, LENGTH, WEIGHT, SEX, AGE, REPORTED_LIFE_STAGE, PHENOTYPE, HATCHERY_MARK, TAG_NUMBER, COLLECTION_DATE, ESTIMATED_DATE, PICKER, PICK_DATE, LEFTOVER_SAMPLE, SAMPLE_COMMENTS, STATE_F, COUNTY_F, WATERSHED, TRIB_1, TRIB_2, WATER_NAME, REACH_SITE, HATCHERY, STRAIN, LATITUDE_F, LONGITUDE_F, LOCATION_COMMENTS_F) %>% 
+  mutate(MISEQ_ID = paste(NMFS_DNA_ID)) %>% 
+  group_by(NMFS_DNA_ID) %>% 
+  distinct() %>% 
+  mutate(WATER_NAME = (str_replace(WATER_NAME, "_", " ")))
+
+```
+
+
+Bind, count number of samples by WATER_NAME, REACH_SITE, and HATCHERY
+
+add SLG name:
+
+# Population formatting
+
+Putah Creek populations WATER_NAMES are: Putah Creek, Upper Putah Creek, Anderson Creek, Trout Creek, Middle Creek, Pope Creek, James Creek
+
+Want to keep following populations, toss rest:
+
+
+1. Coastal north:
+- Willamette R.
+- South Santiam R.
+- Mckenzie R.
+
+2. Klamath:
+- Spring R.
+- Shasta R.
+- Horse Linto Ck. 
+
+3. Coastal mid:
+- Mad R.
+- Freshwater Ck
+- Middle Fork Eel
+- Eel R.
+- Little North Fork Tenmile Ck
+- Dry Ck (Russian River)
+- Alameda Ck
+
+4. Coastal socal:
+- Hilton Ck
+- Piru Ck
+- Coldwater Canyon Ck
+- West Fork San Luis Rey R
+
+5. Putah Creek:
+- Putah Creek
+- Upper Putah Creek
+- Anderson Creek
+- Trout Creek
+- Middle Creek
+- Pope Creek
+- James Creek
+- Lake Berryessa
+
+6. CVA redband:
+ - ~~McCloud Redband~~
+ - Sheepheaven Ck
+ - Moosehead Ck
+ 
+ 7. CVA: 
+ - North Arm Rice Ck (Feather R)
+ - MF American River
+ - Frog Ck (Tuolumne)
+ 
+ 8. CVB:
+ - Coleman Hatchery (Battle Creek)
+ - Deer Ck
+ - ~~Thomes Ck~~
+ - Feather R. Hatchery
+ - Nimbus Hatchery (American River)
+ - Mokelumne R. Hatchery
+ 
+ 9. Inland:
+ - Buck Ck
+ - North Fork Deep Creek
+ - South Fork Deep Creek
+ - North Fork Shields Creek
+ - South Fork Shields Creek
+ - Eagle Lake
+ 
+ 10. Hatchery:
+ - Coleman Hatchery RTColeman
+ - Hot Creek
+ - Pit R. Hatchery
+ - Mt. Shasta Hatchery (American R)
+ - Shasta R. Hatchery
+ - Wyoming Hatchery
+ - Kamloops
+ 
+ 
+
+
+STRUCTURE will cut off characters from slg_name if they are too long (ie not abbreviations):
+
+The names of the individuals must have a population identifier composed of letters and an individual ID number which must be entirely numeric. Because of limitations in some of the programs used in the pipeline, you should strive for no more than 5 letters in the population name and no more than 3 numerals in the ID number.
+
+Letters were assigned for each region: Putah (H), Coastal North (D), Klamath (K), Coastal mid (C), Coastal socal (S), CVA redband (N), CVA (A), CVB (B), Inland (I), Hatchery stocking (R). 
+
+
+
+coastal_north = D _ _ _
+Klamath = K _ _ _
+coastal_mid = C _ _ _
+coastal_socal = S _ _ _
+
+
+Central valley A = A _ _ _
+central valley redband = N _ _ _
+central valley B = B _ _ _
+
+hatchery = R _ _ _
+inland = I _ _ _
+putah  = H _ _ _
+
+```{r}
+# also remove numbers from the populations and filter random NA WATER_NAME samples (from Wisconsin and some other random projects that aren't even remotely relevant)
+meta <- rbind(meta1a, cdfw) %>% 
+  mutate(WATER_NAME = str_replace_all(WATER_NAME, "\\d", "")) %>% 
+  filter(!is.na(WATER_NAME)) %>% 
+  distinct()
+# 6,364 samples -> 6,354 with distinct
+
+# bind on additional population information
+
+popinfo <- read_csv("../compiling/popinfo.csv")
+
+meta2 <- left_join(meta, popinfo, by=c("WATER_NAME", "REACH_SITE", "HATCHERY")) 
+
+```
+
+6,354 samples, many of which contain populations that we will filter out in future steps
+
+
+# Filter for study populations
+
+```{r}
+meta3 <- meta2 %>% 
+  filter(!is.na(SLG)) #2075
+
+# also if NEW_WATER_NAME isn't NA, replace WATER_NAME with NEW_WATER_NAME
+metaf <- meta3 %>% 
+  mutate(WATER_NAME = case_when(
+    is.na(NEW_WATER_NAME) ~ paste(WATER_NAME), 
+    !is.na(NEW_WATER_NAME) ~ paste(NEW_WATER_NAME)
+  )) %>% 
+  select(-NEW_WATER_NAME) %>% 
+  select(-39,-40,-41)
+
+write_csv(metaf, "../compiling/SH_metadata.csv")
+  
+```
+
+
+
+
+
+
