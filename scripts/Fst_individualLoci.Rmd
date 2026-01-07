@@ -1,0 +1,50 @@
+---
+title: "Fst - individual loci"
+output: html_notebook
+---
+
+Fst for individual loci
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(strataG)
+```
+
+
+```{r}
+all_pop <- read_csv("../data/popgen_2col2_aug24.csv") %>% 
+  rename("SLG"="pop")
+```
+
+
+We need to split into groups but by loci so we can check each individual locus
+
+First need to rearrange so locus is its own column instead
+```{r}
+all_locus <- all_pop %>% 
+  pivot_longer(cols = starts_with("tag"), names_to = "locus", values_to = "genotype")
+```
+
+
+```{r}
+gen_di_split <- all_locus %>% 
+  group_by(locus)
+group_name_df <- group_keys(gen_di_split) %>% 
+  mutate(group_name=locus)
+group_name <- group_name_df$group_name %>% sort()
+
+genos_loc <- gen_di_split %>% 
+  group_by(locus) %>% 
+  group_split(.keep = FALSE) %>% 
+  setNames(group_name)
+```
+
+Ok now we can run lapply on genos_loc to get Fst measurements for each locus
+
+```{r}
+
+```
+
+
